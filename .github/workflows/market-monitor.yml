@@ -2,7 +2,9 @@ name: Market screenshot email
 
 on:
   schedule:
-    - cron: "7,27,47 * * * *"
+    # Re-register the scheduler and avoid the top-of-hour load window.
+    - cron: "9,29,49 * * * *"
+      timezone: "Asia/Shanghai"
   workflow_dispatch:
 
 permissions:
@@ -34,4 +36,3 @@ jobs:
           SITE_USERNAME: ${{ secrets.SITE_USERNAME }}
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
         run: python3 monitor.py
-
