@@ -14,6 +14,8 @@
 5. 点击 **New repository secret**，添加：
    - 名称：`QQ_EMAIL`，值：你的完整 QQ 邮箱地址。
    - 名称：`QQ_SMTP_AUTH_CODE`，值：QQ 邮箱 SMTP 授权码，不是 QQ 密码。
+   - 名称：`SITE_USERNAME`，值：监控网站登录账号。
+   - 名称：`SITE_PASSWORD`，值：监控网站登录密码。
 6. 打开仓库的 **Actions** 页面，选择 **Market screenshot email**。
 7. 点击 **Run workflow** 手动运行一次。
 8. 收到带有两张截图的测试邮件后，无需再操作，定时任务会在每小时第 7、27、47 分钟自动执行。
