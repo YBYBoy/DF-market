@@ -12,7 +12,11 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from selenium import webdriver
-from selenium.common.exceptions import NoSuchElementException, TimeoutException
+from selenium.common.exceptions import (
+    NoSuchElementException,
+    TimeoutException,
+    WebDriverException,
+)
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
@@ -49,15 +53,46 @@ def first_visible(driver: webdriver.Chrome, selectors: tuple[str, ...]):
     return None
 
 
+def load_url_with_retry(
+    driver: webdriver.Chrome,
+    url: str,
+    attempts: int = 4,
+) -> None:
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            driver.get(url)
+            WebDriverWait(driver, 30).until(
+                lambda current: current.execute_script("return document.readyState")
+                == "complete"
+            )
+            return
+        except (TimeoutException, WebDriverException) as error:
+            last_error = error
+            if attempt == attempts:
+                break
+            delay = attempt * 10
+            print(
+                f"Website connection attempt {attempt}/{attempts} failed; "
+                f"retrying in {delay} seconds"
+            )
+            try:
+                driver.execute_script("window.stop();")
+            except WebDriverException:
+                pass
+            time.sleep(delay)
+
+    raise RuntimeError(
+        f"Website did not become reachable after {attempts} attempts"
+    ) from last_error
+
+
 def login_if_needed(
     driver: webdriver.Chrome,
     site_username: str,
     site_password: str,
 ) -> None:
-    driver.get("http://39.106.78.149/")
-    WebDriverWait(driver, 30).until(
-        lambda current: current.execute_script("return document.readyState") == "complete"
-    )
+    load_url_with_retry(driver, "http://39.106.78.149/")
 
     password_box = first_visible(driver, ('input[type="password"]',))
     if password_box is None:
@@ -127,7 +162,7 @@ def capture(
                 output = output_dir / filename
                 width, height = (int(value) for value in window_size.split(",", 1))
                 driver.set_window_size(width, height)
-                driver.get(url)
+                load_url_with_retry(driver, url)
                 WebDriverWait(driver, 30).until(
                     EC.presence_of_element_located((By.ID, "floating-gun-bar"))
                 )
@@ -197,4 +232,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
