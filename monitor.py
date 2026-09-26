@@ -4,12 +4,19 @@ import mimetypes
 import os
 import shutil
 import smtplib
-import subprocess
 import tempfile
+import time
 from datetime import datetime
 from email.message import EmailMessage
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+from selenium import webdriver
+from selenium.common.exceptions import NoSuchElementException, TimeoutException
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
 
 PAGES = (
@@ -34,30 +41,105 @@ def find_chrome() -> str:
     raise RuntimeError("Chrome or Chromium was not found on the GitHub runner")
 
 
-def capture(chrome: str, output_dir: Path) -> list[Path]:
+def first_visible(driver: webdriver.Chrome, selectors: tuple[str, ...]):
+    for selector in selectors:
+        for element in driver.find_elements(By.CSS_SELECTOR, selector):
+            if element.is_displayed():
+                return element
+    return None
+
+
+def login_if_needed(
+    driver: webdriver.Chrome,
+    site_username: str,
+    site_password: str,
+) -> None:
+    driver.get("http://39.106.78.149/")
+    WebDriverWait(driver, 30).until(
+        lambda current: current.execute_script("return document.readyState") == "complete"
+    )
+
+    password_box = first_visible(driver, ('input[type="password"]',))
+    if password_box is None:
+        return
+
+    username_box = first_visible(
+        driver,
+        (
+            'input[name="username"]',
+            'input[name="user"]',
+            'input[name="account"]',
+            'input[type="email"]',
+            'input[type="text"]',
+        ),
+    )
+    if username_box is None:
+        raise RuntimeError("Login page found, but the username field was not found")
+
+    username_box.clear()
+    username_box.send_keys(site_username)
+    password_box.clear()
+    password_box.send_keys(site_password)
+
+    submit_button = first_visible(
+        driver,
+        ('button[type="submit"]', 'input[type="submit"]'),
+    )
+    if submit_button is not None:
+        submit_button.click()
+    else:
+        password_box.send_keys(Keys.ENTER)
+
+    try:
+        WebDriverWait(driver, 30).until(
+            lambda current: current.find_elements(By.ID, "floating-gun-bar")
+            or "T0 / T1" in current.page_source
+        )
+    except TimeoutException as error:
+        raise RuntimeError("Website login did not reach the market page") from error
+
+
+def capture(
+    chrome: str,
+    output_dir: Path,
+    site_username: str,
+    site_password: str,
+) -> list[Path]:
     screenshots: list[Path] = []
     with tempfile.TemporaryDirectory(prefix="market-monitor-") as profile:
-        for filename, window_size, url in PAGES:
-            output = output_dir / filename
-            command = [
-                chrome,
-                "--headless=new",
-                "--disable-gpu",
-                "--disable-dev-shm-usage",
-                "--hide-scrollbars",
-                "--no-first-run",
-                "--no-default-browser-check",
-                "--run-all-compositor-stages-before-draw",
-                "--virtual-time-budget=8000",
-                f"--user-data-dir={profile}",
-                f"--window-size={window_size}",
-                f"--screenshot={output}",
-                url,
-            ]
-            subprocess.run(command, check=True, timeout=90)
-            if not output.exists() or output.stat().st_size < 1024:
-                raise RuntimeError(f"Invalid screenshot: {output}")
-            screenshots.append(output)
+        options = webdriver.ChromeOptions()
+        options.binary_location = chrome
+        options.add_argument("--headless=new")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--hide-scrollbars")
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-default-browser-check")
+        options.add_argument(f"--user-data-dir={profile}")
+        options.add_argument("--window-size=1000,1200")
+
+        driver = webdriver.Chrome(options=options)
+        try:
+            driver.set_page_load_timeout(60)
+            login_if_needed(driver, site_username, site_password)
+
+            for filename, window_size, url in PAGES:
+                output = output_dir / filename
+                width, height = (int(value) for value in window_size.split(",", 1))
+                driver.set_window_size(width, height)
+                driver.get(url)
+                WebDriverWait(driver, 30).until(
+                    EC.presence_of_element_located((By.ID, "floating-gun-bar"))
+                )
+                if first_visible(driver, ('input[type="password"]',)) is not None:
+                    raise RuntimeError("Website session returned to the login page")
+                time.sleep(3)
+                driver.save_screenshot(str(output))
+                if not output.exists() or output.stat().st_size < 1024:
+                    raise RuntimeError(f"Invalid screenshot: {output}")
+                screenshots.append(output)
+        finally:
+            driver.quit()
     return screenshots
 
 
@@ -94,12 +176,21 @@ def send_email(email_address: str, auth_code: str, screenshots: list[Path]) -> N
 def main() -> None:
     email_address = os.environ.get("QQ_EMAIL", "").strip()
     auth_code = os.environ.get("QQ_SMTP_AUTH_CODE", "").strip()
-    if not email_address or not auth_code:
-        raise RuntimeError("QQ_EMAIL and QQ_SMTP_AUTH_CODE secrets are required")
+    site_username = os.environ.get("SITE_USERNAME", "").strip()
+    site_password = os.environ.get("SITE_PASSWORD", "").strip()
+    if not all((email_address, auth_code, site_username, site_password)):
+        raise RuntimeError(
+            "QQ_EMAIL, QQ_SMTP_AUTH_CODE, SITE_USERNAME and SITE_PASSWORD secrets are required"
+        )
 
     output_dir = Path("screenshots")
     output_dir.mkdir(exist_ok=True)
-    screenshots = capture(find_chrome(), output_dir)
+    screenshots = capture(
+        find_chrome(),
+        output_dir,
+        site_username,
+        site_password,
+    )
     send_email(email_address, auth_code, screenshots)
     print("Screenshots captured and email sent successfully")
 
