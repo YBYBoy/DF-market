@@ -1,10 +1,7 @@
 name: Market screenshot email
 
 on:
-  # Temporary push trigger validates the retry fix once.
-  push:
-    branches:
-      - main
+  # Triggered every 20 minutes by cron-job.org.
   workflow_dispatch:
 
 permissions:
