@@ -1,10 +1,7 @@
 name: Market screenshot email
 
 on:
-  schedule:
-    # Re-register the scheduler and avoid the top-of-hour load window.
-    - cron: "9,29,49 * * * *"
-      timezone: "Asia/Shanghai"
+  # Triggered every 20 minutes by cron-job.org.
   workflow_dispatch:
 
 permissions:
