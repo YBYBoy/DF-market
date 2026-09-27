@@ -134,6 +134,44 @@ def login_if_needed(
         raise RuntimeError("Website login did not reach the market page") from error
 
 
+def load_market_page_with_retry(
+    driver: webdriver.Chrome,
+    url: str,
+    site_username: str,
+    site_password: str,
+    attempts: int = 4,
+) -> None:
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            load_url_with_retry(driver, url, attempts=2)
+            if first_visible(driver, ('input[type="password"]',)) is not None:
+                login_if_needed(driver, site_username, site_password)
+                continue
+            WebDriverWait(driver, 30).until(
+                EC.presence_of_element_located((By.ID, "floating-gun-bar"))
+            )
+            return
+        except (TimeoutException, WebDriverException, RuntimeError) as error:
+            last_error = error
+            if attempt == attempts:
+                break
+            delay = attempt * 15
+            print(
+                f"Market page validation attempt {attempt}/{attempts} failed; "
+                f"retrying in {delay} seconds"
+            )
+            time.sleep(delay)
+            try:
+                login_if_needed(driver, site_username, site_password)
+            except (TimeoutException, WebDriverException, RuntimeError):
+                pass
+
+    raise RuntimeError(
+        f"Market page did not become ready after {attempts} attempts"
+    ) from last_error
+
+
 def capture(
     chrome: str,
     output_dir: Path,
@@ -162,12 +200,12 @@ def capture(
                 output = output_dir / filename
                 width, height = (int(value) for value in window_size.split(",", 1))
                 driver.set_window_size(width, height)
-                load_url_with_retry(driver, url)
-                WebDriverWait(driver, 30).until(
-                    EC.presence_of_element_located((By.ID, "floating-gun-bar"))
+                load_market_page_with_retry(
+                    driver,
+                    url,
+                    site_username,
+                    site_password,
                 )
-                if first_visible(driver, ('input[type="password"]',)) is not None:
-                    raise RuntimeError("Website session returned to the login page")
                 time.sleep(3)
                 driver.save_screenshot(str(output))
                 if not output.exists() or output.stat().st_size < 1024:
